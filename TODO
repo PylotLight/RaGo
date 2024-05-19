@@ -1,0 +1,37 @@
+Plan:
+
+1. RAG and Function Calling in Go:
+   - To achieve RAG-based chat functionality in Go, consider using the Hugging Face Transformers library. It provides pre-trained language models (including GPT-2 and GPT-3) that you can fine-tune for your specific use case.
+   - For function calling, you can create a modular system where certain keywords trigger specific functions. You'll need to define these functions and their behavior.
+   - Your plan to get the RAG SDK working with Groq is a good starting point. Make sure you can retrieve relevant information from your data sources.
+
+2. Custom API Server:
+   - Connecting your RAG chatbot to a custom API server is essential. This server can handle function calls, database queries, and other external interactions.
+   - Consider using a lightweight web framework like Gin or Echo to build your API endpoints.
+
+3. Function Calling Setup:
+   - The basic function calling setup you shared is a good foundation. Extend it to handle more complex logic and integrate it with your RAG responses.
+   - Ensure proper error handling and security measures (e.g., input validation, rate limiting).
+
+4. LangChain and RAG Integration:
+   - The LangChian example you linked demonstrates code completion. You can adapt this to work alongside RAG.
+   - When RAG generates a response, use LangChain to suggest code completions or function calls based on the context.
+
+5. Combine RAG and Function Calls:
+   - Integrate RAG-generated answers with function calls. For example, if RAG suggests a function name, execute that function.
+   - Keep track of conversation context to maintain coherence.
+
+6. Advanced Function Calling:
+   - Explore more advanced function calling techniques, such as handling parameters, asynchronous calls, and state management.
+   - Consider using Go's concurrency features (goroutines and channels) for efficiency.
+
+
+# Issues
+<!-- command format: can you scale syncthing to 1 -->
+<!-- // "command":"syncthing --scale 1","parameters":{},"rationale":"Scaling syncthing to 1"}} - fixed
+// is syncthing currently running?
+// result: Error from server (NotFound): pods "|" not found
+// Error from server (NotFound): pods "grep" not found
+// Error from server (NotFound): pods "syncthing" not found
+//  (0x7aa3e0,0xc0004741a0) -->
+
