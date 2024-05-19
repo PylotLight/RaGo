@@ -8,16 +8,6 @@ import (
 	rag "rago/internal/rago"
 )
 
-func GetChatHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract input from the request (query parameters, JSON body, etc.)
-	// Call your OpenAI model to generate a response
-	// Write the response to the http.ResponseWriter
-	prompt := r.PathValue("prompt")
-	fmt.Fprintf(w, "Your GET chat response goes here\n")
-	prompt = "scale syncthing deployment to 0"
-	rag.LangChainQuery(prompt)
-}
-
 func PostChatHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract input from the request (query parameters, JSON body, etc.)
 	// Call your OpenAI model to generate a response

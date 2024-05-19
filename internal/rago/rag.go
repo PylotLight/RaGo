@@ -26,59 +26,6 @@ Ensure the commands are correctly formatted and valid.
 e.g kubectl scale deployment app --replicas==1
 `
 
-// func GetRAGChain() {
-// 	llm, err := openai.New(
-// 		openai.WithModel("llama3-70b-8192"),
-// 		openai.WithBaseURL("https://api.groq.com/openai/v1"),
-// 	)
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// 	ctx := context.Background()
-// 	_, err = llms.GenerateFromSinglePrompt(ctx,
-// 		llm,
-// 		"Write a long poem about how golang is a fantastic language.",
-// 		llms.WithTemperature(0.8),
-// 		llms.WithMaxTokens(4096),
-// 		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-// 			fmt.Print(string(chunk))
-// 			return nil
-// 		}),
-// 	)
-// 	fmt.Println()
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// }
-
-// func LangChainTest(location string) {
-// 	llm, err := openai.New(
-// 		openai.WithModel("llama3-70b-8192"),
-// 		openai.WithBaseURL("https://api.groq.com/openai/v1"),
-// 	)
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// 	ctx := context.Background()
-// 	resp, err := llm.GenerateContent(ctx,
-// 		[]llms.MessageContent{
-// 			llms.TextParts(llms.ChatMessageTypeHuman, "What is the weather like in %s?", location),
-// 		},
-// 		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-// 			fmt.Printf("Received chunk: %s\n", chunk)
-// 			return nil
-// 		}),
-// 		llms.WithTools(tools))
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-
-// 	choice1 := resp.Choices[0]
-// 	if choice1.FuncCall != nil {
-// 		fmt.Printf("Function call: %v\n", choice1.FuncCall)
-// 	}
-// }
-
 func LangChainQuery(prompt string) string {
 	llm, err := openai.New(
 		openai.WithModel("llama3-70b-8192"),
