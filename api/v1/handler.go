@@ -3,27 +3,39 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 
 	rag "rago/internal/rago"
+
+	"github.com/sashabaranov/go-openai"
 )
 
-func PostChatHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract input from the request (query parameters, JSON body, etc.)
-	// Call your OpenAI model to generate a response
-	// Write the response to the http.ResponseWriter
-	var jsonBody struct {
-		Prompt string //`json:"Prompt"`
-	}
-	err := json.NewDecoder(r.Body).Decode(&jsonBody)
+func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
+	var req openai.ChatCompletionRequest
+	body, err := io.ReadAll(r.Body)
+	io.Copy(os.Stdout, r.Body)
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		println(err.Error())
+	}
+
+	if err = json.Unmarshal(body, &req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request payload: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	result := rag.LangChainQuery(jsonBody.Prompt)
+	stream, err := rag.GenerateCompletion(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error generating completion: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-	// fmt.Fprintf(w, "Your POST chat response goes here\n%s", body)
-	fmt.Fprint(w, result)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
 
+	if _, err := io.Copy(w, stream); err != nil {
+		http.Error(w, fmt.Sprintf("Error streaming response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }

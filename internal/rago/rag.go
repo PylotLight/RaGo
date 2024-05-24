@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/tmc/langchaingo/jsonschema"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/openai"
+	// "github.com/tmc/langchaingo/jsonschema"
+	// "github.com/tmc/langchaingo/llms"
+
+	// "github.com/tmc/langchaingo/llms/openai"
+
+	"github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 const systemPrompt = `
@@ -26,132 +31,174 @@ Ensure the commands are correctly formatted and valid.
 e.g kubectl scale deployment app --replicas==1
 `
 
-func LangChainQuery(prompt string) string {
-	llm, err := openai.New(
-		openai.WithModel("llama3-70b-8192"),
-		openai.WithBaseURL("https://api.groq.com/openai/v1"),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+// Modified GenerateCompletion function with refactored logic
+func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
+	config := openai.DefaultConfig(os.Getenv("GROQ_API_KEY"))
+	config.BaseURL = "https://api.groq.com/openai/v1"
+	c := openai.NewClientWithConfig(config)
 	ctx := context.Background()
-	resp, err := llm.GenerateContent(ctx,
-		[]llms.MessageContent{
-			// TODO add system prompts to further guide the response around output and command structure
-			llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
-			llms.TextParts(llms.ChatMessageTypeHuman, prompt),
+
+	// Define the function schema for executing commands
+	params := jsonschema.Definition{
+		Type: jsonschema.Object,
+		Properties: map[string]jsonschema.Definition{
+			"command": {
+				Type:        jsonschema.String,
+				Description: "The kubectl command to execute",
+			},
 		},
-		// llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-		// 	// fmt.Printf("Received chunk: %s\n", chunk)
-		// 	return nil
-		// }),
-		llms.WithTools(tools))
-	if err != nil {
-		log.Fatal(err)
+		Required: []string{"command"},
 	}
 
-	choice1 := resp.Choices[0]
-	if choice1.FuncCall != nil {
-		fmt.Printf("Function call: %v\n", choice1.FuncCall.Arguments)
-		// Execute the function call
-		var params map[string]interface{}
-		err := json.Unmarshal([]byte(choice1.FuncCall.Arguments), &params)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// Execute the function call
-		result, err := executeCommand(params)
-		if err != nil {
-			log.Fatal("Failed to execute command: ", err.Error())
-		}
-		if result == "" {
-			result = "command returned no result"
-		}
-		fmt.Printf("Command result: %s\n", result)
-
-		// Send the result back to the AI for summarization
-		summary, err := llm.GenerateContent(ctx,
-			[]llms.MessageContent{
-				llms.TextParts(llms.ChatMessageTypeSystem, "Keep the response short and do not repeat the question, just answer as required"),
-				llms.TextParts(llms.ChatMessageTypeHuman, fmt.Sprintf("Provide very short summary for what happened based on the result of the following command execution:\nCommand:%s\nResult:%s", params["command"], result)),
-			})
-		if err != nil {
-			log.Fatal(err)
-		}
-		// fmt.Printf("Summary: %s\n", summary.Choices[0].Content)
-
-		return summary.Choices[0].Content + "\n"
+	f := openai.FunctionDefinition{
+		Name:        "executeCommand",
+		Description: "Execute a command with given parameters",
+		Parameters:  params,
 	}
-	return "Error failed to run command"
+
+	t := openai.Tool{
+		Type:     openai.ToolTypeFunction,
+		Function: &f,
+	}
+
+	// Add system prompt
+	req.Messages = append([]openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: systemPrompt,
+		},
+	}, req.Messages...)
+
+	// Add the tool to the request
+	req.Tools = append(req.Tools, t)
+
+	// Create a pipe to stream the response
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		// Call the OpenAI API with streaming
+		stream, err := c.CreateChatCompletionStream(ctx, req)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		defer stream.Close()
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+
+			for _, choice := range resp.Choices {
+				if choice.Delta.ToolCalls != nil {
+					toolCall := choice.Delta.ToolCalls[0]
+					if err := handleToolCall(c, ctx, pw, toolCall, req); err != nil {
+						pw.CloseWithError(err)
+						return
+					}
+
+				}
+			}
+		}
+
+	}()
+
+	return pr, nil
 }
 
-func executeCommand(params map[string]interface{}) (string, error) {
+// Extract the tool handling logic into a separate function
+func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWriter, toolCall openai.ToolCall, req openai.ChatCompletionRequest) error {
+	var params map[string]interface{}
+	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+		return fmt.Errorf("invalid function call arguments: %v", err)
+	}
+
+	// Execute the function call
 	command, ok := params["command"].(string)
 	if !ok {
-		return "", fmt.Errorf("command not specified or not a string")
+		return fmt.Errorf("command not found in function call arguments")
+	}
+	result, err := executeCommand(command)
+	if err != nil {
+		return fmt.Errorf("error executing command: %v", err)
 	}
 
-	_, ok = params["rationale"].(string)
-	if !ok {
-		return "", fmt.Errorf("rationale not specified or not a string")
+	// Write the result to the stream
+	if _, err := pw.Write([]byte(result)); err != nil {
+		return err
 	}
 
-	parameters, ok := params["parameters"].(map[string]interface{})
-	if !ok {
-		parameters = map[string]interface{}{}
+	// Summarize the result
+	summary, err := summarizeResult(client, ctx, req.Model, result)
+	if err != nil {
+		return err
 	}
 
-	// Example handling for kubectl commands
-	if strings.HasPrefix(command, "kubectl") {
-		// Construct kubectl command
-		cmd := exec.Command("kubectl", buildKubectlArgs(command, parameters)...)
+	// Write the summary to the stream
+	if _, err := pw.Write([]byte("\n\nSummary: " + summary)); err != nil {
+		return err
+	}
 
-		output, err := cmd.CombinedOutput()
-		println("result:", string(output), err)
+	return nil
+}
+
+// Extract the summary portion into a separate function
+func summarizeResult(client *openai.Client, ctx context.Context, model string, result string) (string, error) {
+	summaryReq := openai.ChatCompletionRequest{
+		Model: model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: "Summarize the following command execution result:",
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: result,
+			},
+		},
+	}
+
+	summaryStream, err := client.CreateChatCompletionStream(ctx, summaryReq)
+	if err != nil {
+		return "", err
+	}
+	defer summaryStream.Close()
+
+	var summary string
+	for {
+		summaryResp, err := summaryStream.Recv()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
 			return "", err
 		}
-		return string(output), nil
+
+		if len(summaryResp.Choices) > 0 {
+			summary += summaryResp.Choices[0].Delta.Content
+		}
 	}
 
-	// Add more command handling logic as needed
-
-	return "", fmt.Errorf("unsupported command")
+	return summary, nil
 }
 
-func buildKubectlArgs(command string, params map[string]interface{}) []string {
-	args := strings.Split(command, " ")[1:]
-	for key, value := range params {
-		args = append(args, key, fmt.Sprintf("%v", value))
+func executeCommand(command string) (string, error) {
+	if !strings.HasPrefix(command, "kubectl") {
+		return "", fmt.Errorf("unsupported command: %s", command)
 	}
-	return args
-}
 
-var tools = []llms.Tool{
-	{
-		Type: "function",
-		Function: &llms.FunctionDefinition{
-			Name:        "executeCommand",
-			Description: "Execute a command with given parameters",
-			Parameters: jsonschema.Definition{
-				Type: jsonschema.Object,
-				Properties: map[string]jsonschema.Definition{
-					"rationale": {
-						Type:        jsonschema.String,
-						Description: "The rationale for choosing this function call with these parameters",
-					},
-					"command": {
-						Type:        jsonschema.String,
-						Description: "The command to be executed, e.g. 'kubectl get pods'",
-					},
-					// "parameters": {
-					// 	Type:        jsonschema.Object,
-					// 	Description: "Additional parameters for the command as key-value pairs",
-					// },
-				},
-				Required: []string{"rationale", "command"},
-			},
-		},
-	},
+	cmd := exec.Command("sh", "-c", command)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(output)), nil
 }
