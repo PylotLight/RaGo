@@ -27,11 +27,7 @@ Plan:
 
 
 # Issues
-<!-- command format: can you scale syncthing to 1 -->
-<!-- // "command":"syncthing --scale 1","parameters":{},"rationale":"Scaling syncthing to 1"}} - fixed
-// is syncthing currently running?
-// result: Error from server (NotFound): pods "|" not found
-// Error from server (NotFound): pods "grep" not found
-// Error from server (NotFound): pods "syncthing" not found
-//  (0x7aa3e0,0xc0004741a0) -->
+- can you get all pods? = "get pods": prompt not generating full command?
+- streaming response not coming through: semi working
+- errors not returned as well summerised: fixed
 

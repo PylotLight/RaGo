@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -76,7 +77,12 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		// defer pw.Close()
+		defer func() {
+			if err := pw.Close(); err != nil {
+				log.Printf("Error closing pipe writer: %v", err)
+			}
+		}()
 
 		// Call the OpenAI API with streaming
 		stream, err := c.CreateChatCompletionStream(ctx, req)
@@ -122,27 +128,24 @@ func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWrite
 
 	// Execute the function call
 	command, ok := params["command"].(string)
+	// println(command)
 	if !ok {
 		return fmt.Errorf("command not found in function call arguments")
 	}
 	result, err := executeCommand(command)
 	if err != nil {
-		return fmt.Errorf("error executing command: %v", err)
+		result = err.Error()
 	}
 
-	// Write the result to the stream
-	if _, err := pw.Write([]byte(result)); err != nil {
-		return err
-	}
-
+	commandSummary := fmt.Sprintf("%s\n%s", command, result)
 	// Summarize the result
-	summary, err := summarizeResult(client, ctx, req.Model, result)
+	summary, err := summarizeResult(client, ctx, req.Model, commandSummary)
 	if err != nil {
 		return err
 	}
 
 	// Write the summary to the stream
-	if _, err := pw.Write([]byte("\n\nSummary: " + summary)); err != nil {
+	if _, err := pw.Write([]byte(summary)); err != nil {
 		return err
 	}
 
@@ -156,7 +159,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: "Summarize the following command execution result:",
+				Content: "Summarize concisely in 1 sentence using past tense for the following command and execution result.",
 			},
 			{
 				Role:    openai.ChatMessageRoleUser,
