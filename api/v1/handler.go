@@ -33,25 +33,10 @@ func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
-	// w.Header().Set("Connection", "keep-alive")
-
-	// Ensure the writer is flushed for each chunk
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-		return
-	}
-
-	// go func() {
-	// defer stream.io.Reader
 
 	if _, err := io.Copy(w, stream); err != nil {
 		http.Error(w, fmt.Sprintf("Error streaming response: %v", err), http.StatusInternalServerError)
 		return
 	}
-	// }()
-
-	// Flush the headers and start streaming
-	flusher.Flush()
 
 }

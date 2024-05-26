@@ -9,11 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	// "github.com/tmc/langchaingo/jsonschema"
-	// "github.com/tmc/langchaingo/llms"
-
-	// "github.com/tmc/langchaingo/llms/openai"
+	"time"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
@@ -28,7 +24,7 @@ You are an assistant that helps execute Kubernetes commands. Only generate comma
 - logs
 - rollout
 
-Ensure the commands are correctly formatted and valid.
+Ensure the commands are correctly formatted and valid, the commands must start with kubectl.
 e.g kubectl scale deployment app --replicas==1
 `
 
@@ -95,6 +91,36 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 		for {
 			resp, err := stream.Recv()
 			if err == io.EOF {
+				// Final response to indicate completion
+				finalResponse := openai.ChatCompletionStreamResponse{
+					ID:      resp.ID,
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   req.Model,
+					Choices: []openai.ChatCompletionStreamChoice{{
+						Index:        0,
+						FinishReason: "stop",
+					}},
+				}
+				jsonResponse, err := json.Marshal(finalResponse)
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+
+				// Add the "data: " prefix for the final response
+				prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
+				if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+
+				// Write the [DONE] message to indicate end of stream
+				if _, err := pw.Write([]byte("data: [DONE]\n")); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+
 				break
 			}
 			if err != nil {
@@ -105,11 +131,30 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 			for _, choice := range resp.Choices {
 				if choice.Delta.ToolCalls != nil {
 					toolCall := choice.Delta.ToolCalls[0]
-					if err := handleToolCall(c, ctx, pw, toolCall, req); err != nil {
+					var result string
+					if result, err = handleToolCall(c, ctx, pw, toolCall, req); err != nil {
 						pw.CloseWithError(err)
 						return
 					}
-
+					formattedResponse := openai.ChatCompletionStreamResponse{
+						ID:                resp.ID,
+						Object:            "chat.completion.chunk",
+						Created:           resp.Created,
+						Model:             req.Model,
+						Choices:           []openai.ChatCompletionStreamChoice{{Index: 0, Delta: openai.ChatCompletionStreamChoiceDelta{Content: result}}},
+						SystemFingerprint: resp.SystemFingerprint,
+					}
+					jsonResponse, err := json.Marshal(formattedResponse)
+					if err != nil {
+						pw.CloseWithError(err)
+						return
+					}
+					// Add the "data: " prefix
+					prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
+					if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
+						pw.CloseWithError(err)
+						return
+					}
 				}
 			}
 		}
@@ -120,17 +165,16 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 }
 
 // Extract the tool handling logic into a separate function
-func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWriter, toolCall openai.ToolCall, req openai.ChatCompletionRequest) error {
+func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWriter, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
-		return fmt.Errorf("invalid function call arguments: %v", err)
+		return fmt.Errorf("invalid function call arguments: %v", err).Error(), fmt.Errorf("invalid function call arguments: %v", err)
 	}
 
 	// Execute the function call
 	command, ok := params["command"].(string)
-	// println(command)
 	if !ok {
-		return fmt.Errorf("command not found in function call arguments")
+		return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
 	}
 	result, err := executeCommand(command)
 	if err != nil {
@@ -139,17 +183,12 @@ func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWrite
 
 	commandSummary := fmt.Sprintf("%s\n%s", command, result)
 	// Summarize the result
-	summary, err := summarizeResult(client, ctx, req.Model, commandSummary)
+	resultsummary, err := summarizeResult(client, ctx, req.Model, commandSummary)
 	if err != nil {
-		return err
+		return err.Error(), err
 	}
 
-	// Write the summary to the stream
-	if _, err := pw.Write([]byte(summary)); err != nil {
-		return err
-	}
-
-	return nil
+	return resultsummary, nil
 }
 
 // Extract the summary portion into a separate function
