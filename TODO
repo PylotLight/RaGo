@@ -1,33 +1,20 @@
-Plan:
-
-1. RAG and Function Calling in Go:
-   - To achieve RAG-based chat functionality in Go, consider using the Hugging Face Transformers library. It provides pre-trained language models (including GPT-2 and GPT-3) that you can fine-tune for your specific use case.
-   - For function calling, you can create a modular system where certain keywords trigger specific functions. You'll need to define these functions and their behavior.
-   - Your plan to get the RAG SDK working with Groq is a good starting point. Make sure you can retrieve relevant information from your data sources.
-
-2. Custom API Server:
-   - Connecting your RAG chatbot to a custom API server is essential. This server can handle function calls, database queries, and other external interactions.
-   - Consider using a lightweight web framework like Gin or Echo to build your API endpoints.
-
-3. Function Calling Setup:
-   - The basic function calling setup you shared is a good foundation. Extend it to handle more complex logic and integrate it with your RAG responses.
-   - Ensure proper error handling and security measures (e.g., input validation, rate limiting).
-
-4. LangChain and RAG Integration:
-   - The LangChian example you linked demonstrates code completion. You can adapt this to work alongside RAG.
-   - When RAG generates a response, use LangChain to suggest code completions or function calls based on the context.
-
-5. Combine RAG and Function Calls:
-   - Integrate RAG-generated answers with function calls. For example, if RAG suggests a function name, execute that function.
-   - Keep track of conversation context to maintain coherence.
-
-6. Advanced Function Calling:
-   - Explore more advanced function calling techniques, such as handling parameters, asynchronous calls, and state management.
-   - Consider using Go's concurrency features (goroutines and channels) for efficiency.
-
-
 # Issues
-- can you get all pods? = "get pods": prompt not generating full command?
-- streaming response not coming through: semi working
-- errors not returned as well summerised: fixed
+- can you get all pods? = "get pods": prompt not generating full command? monitor after improved system prompt
+- allow more command option versitility: improved
+- I also need to fix response stability: improved specific system prompt / schema defintion updates / pattern matching?
+- Need to make sure the original question is answered based on the information provided: fixed?
 
+# Features
+- add external accessiblity
+- dockerise and host on cluster
+- add CICD pipe + skate for auth/secrets?
+- add auth support for external connection
+- I also want to look at multi step tools: borrowed from https://github.com/enricoros/big-AGI/blob/084e48ddc23fdf602fca961539e4f4e4a590cefe/src/modules/aifn/react/react.ts#L15
+- add sudo support for zpool/dmesg access
+- allow for general AI queries dynamically, rag/action':' option?
+- allow for command confirmations and multi step interactions
+
+# More use cases
+- cron get server details/health and send update notifications
+- CRUD memos
+- light control

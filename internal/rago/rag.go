@@ -9,23 +9,64 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 const systemPrompt = `
-You are an assistant that helps execute Kubernetes commands. Only generate commands using the following verbs: 
-- get
-- describe
-- scale
-- top
-- logs
-- rollout
+You are an assistant that helps execute various system and Kubernetes commands. Your primary goal is to ensure commands are correctly formatted and valid.
+Never repeat the question prompt.
+Basic Kubernetes Commands must start with 'kubectl' for Kubernetes to pull basic information or update deployment scaling. Examples:
+- kubectl get pods
+- kubectl describe node
+- kubectl scale deployment app --replicas==1
+- kubectl logs app
 
-Ensure the commands are correctly formatted and valid, the commands must start with kubectl.
-e.g kubectl scale deployment app --replicas==1
+You can also run general system commands. Examples:
+- free -h
+- df -h
+
+Ensure the output is correct and complete. If additional information is needed, perform the necessary intermediary steps to gather required details.
+
+For multi-step processes, think through the sequence of commands needed to achieve the final goal and execute them accordingly. For example, if a specific pod's logs are requested but not provided, first list the pods using '$(kubectl get pods | grep app | awk '{print $1}' | head -1)' to find the relevant name, then retrieve the logs for that pod.
+
+When a specific pod name is needed, use multiple inline commands, ensure they are correctly formatted. Examples:
+- kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1)
+- kubectl logs $(kubectl get pods | grep app | awk '{print $1}' | head -1) | tail -50
+- free -h | awk '{print $1, $2, $3}'
+`
+
+const reActPrompt = `
+You are a Question Answering AI with reasoning ability.
+You will receive a Question from the User.
+In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
+If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
+You will use "Thought: " to describe your thoughts about the question being asked.
+You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
+"Observation" will be presented to you as the result of previous "Action".
+If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
+
+Your available "Actions" are:
+- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods)
+- System: Execute a system command (e.g., free -h)
+- Network: Execute a network command (e.g., ping google.com)
+
+
+Examples:
+Question: Can you get the logs for the pod named "my-pod"?
+Thought: I should get the logs for the specified pod.
+Action: kubectl logs my-pod
+
+Question: Can you get the details for the pod running the "nginx" container?
+Thought: I need to find the pod running the "nginx" container first.
+Action: kubectl get pods | grep 'app'
+
+You will be called again with the following, along with all previous messages between the User and You:
+Observation: nginx-app-tg89ftg8tdt
+
+Thought: I found the pod running the "nginx" container. Now I need to get its details.
+Action: kubectl describe pod <pod-name>
 `
 
 // Modified GenerateCompletion function with refactored logic
@@ -91,29 +132,6 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 		for {
 			resp, err := stream.Recv()
 			if err == io.EOF {
-				// Final response to indicate completion
-				finalResponse := openai.ChatCompletionStreamResponse{
-					ID:      resp.ID,
-					Object:  "chat.completion.chunk",
-					Created: time.Now().Unix(),
-					Model:   req.Model,
-					Choices: []openai.ChatCompletionStreamChoice{{
-						Index:        0,
-						FinishReason: "stop",
-					}},
-				}
-				jsonResponse, err := json.Marshal(finalResponse)
-				if err != nil {
-					pw.CloseWithError(err)
-					return
-				}
-
-				// Add the "data: " prefix for the final response
-				prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
-				if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
-					pw.CloseWithError(err)
-					return
-				}
 
 				// Write the [DONE] message to indicate end of stream
 				if _, err := pw.Write([]byte("data: [DONE]\n")); err != nil {
@@ -132,7 +150,7 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 				if choice.Delta.ToolCalls != nil {
 					toolCall := choice.Delta.ToolCalls[0]
 					var result string
-					if result, err = handleToolCall(c, ctx, pw, toolCall, req); err != nil {
+					if result, err = handleToolCall(c, ctx, toolCall, req); err != nil {
 						pw.CloseWithError(err)
 						return
 					}
@@ -165,7 +183,7 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 }
 
 // Extract the tool handling logic into a separate function
-func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWriter, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
+func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return fmt.Errorf("invalid function call arguments: %v", err).Error(), fmt.Errorf("invalid function call arguments: %v", err)
@@ -181,7 +199,8 @@ func handleToolCall(client *openai.Client, ctx context.Context, pw *io.PipeWrite
 		result = err.Error()
 	}
 
-	commandSummary := fmt.Sprintf("%s\n%s", command, result)
+	commandSummary := fmt.Sprintf("Prompt:%s\n\nCommand:%s\n\nResult:%s", req.Messages[1].Content, command, result)
+	println(commandSummary)
 	// Summarize the result
 	resultsummary, err := summarizeResult(client, ctx, req.Model, commandSummary)
 	if err != nil {
@@ -198,7 +217,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: "Summarize concisely in 1 sentence using past tense for the following command and execution result.",
+				Content: "Concisely answer the question if required or summerise result in 1 sentence using past tense for the following command and execution result.",
 			},
 			{
 				Role:    openai.ChatMessageRoleUser,
@@ -232,9 +251,9 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 }
 
 func executeCommand(command string) (string, error) {
-	if !strings.HasPrefix(command, "kubectl") {
-		return "", fmt.Errorf("unsupported command: %s", command)
-	}
+	// if !strings.HasPrefix(command, "kubectl") {
+	// 	return "", fmt.Errorf("unsupported command: %s", command)
+	// }
 
 	cmd := exec.Command("sh", "-c", command)
 	output, err := cmd.CombinedOutput()
