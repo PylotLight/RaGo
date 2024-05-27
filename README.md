@@ -10,9 +10,5 @@ mods cli: https://github.com/charmbracelet/mods
 e.g mods can you scale jellyfin to 0?
 
 Long term:
-<<<<<<< HEAD
 - With the ability to dynamically call multiple functions, we could have a full home nas/server interaction tool for pulling server info like free memory and other logs and diagnostics for a quick evaluation tool which generates and runs the commands for you which is accessible from home or away from home via easy cli.
 - I'd like to then expand this to a full k8s cluster interaction and diagnosis tool like https://github.com/k8sgpt-ai/k8sgpt
-=======
-With the ability to dynamically call multiple functions, we could have a full home nas/server interaction tool for pulling server info like free memory and other logs and diagnostics for a quick evaluation tool which generates and runs the commands for you which is accessible from home or away from home via easy cli.
->>>>>>> 0b5fd589474e14e41c6a338b8ae0dc9bdcb7a749
