@@ -37,37 +37,36 @@ When a specific pod name is needed, use multiple inline commands, ensure they ar
 - free -h | awk '{print $1, $2, $3}'
 `
 
-const reActPrompt = `
-You are a Question Answering AI with reasoning ability.
-You will receive a Question from the User.
-In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
-If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
-You will use "Thought: " to describe your thoughts about the question being asked.
-You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
-"Observation" will be presented to you as the result of previous "Action".
-If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
+// const reActPrompt = `
+// You are a Question Answering AI with reasoning ability.
+// You will receive a Question from the User.
+// In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
+// If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
+// You will use "Thought: " to describe your thoughts about the question being asked.
+// You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
+// "Observation" will be presented to you as the result of previous "Action".
+// If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
 
-Your available "Actions" are:
-- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods)
-- System: Execute a system command (e.g., free -h)
-- Network: Execute a network command (e.g., ping google.com)
+// Your available "Actions" are:
+// - Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods)
+// - System: Execute a system command (e.g., free -h)
+// - Network: Execute a network command (e.g., ping google.com)
 
+// Examples:
+// Question: Can you get the logs for the pod named "my-pod"?
+// Thought: I should get the logs for the specified pod.
+// Action: kubectl logs my-pod
 
-Examples:
-Question: Can you get the logs for the pod named "my-pod"?
-Thought: I should get the logs for the specified pod.
-Action: kubectl logs my-pod
+// Question: Can you get the details for the pod running the "nginx" container?
+// Thought: I need to find the pod running the "nginx" container first.
+// Action: kubectl get pods | grep 'app'
 
-Question: Can you get the details for the pod running the "nginx" container?
-Thought: I need to find the pod running the "nginx" container first.
-Action: kubectl get pods | grep 'app'
+// You will be called again with the following, along with all previous messages between the User and You:
+// Observation: nginx-app-tg89ftg8tdt
 
-You will be called again with the following, along with all previous messages between the User and You:
-Observation: nginx-app-tg89ftg8tdt
-
-Thought: I found the pod running the "nginx" container. Now I need to get its details.
-Action: kubectl describe pod <pod-name>
-`
+// Thought: I found the pod running the "nginx" container. Now I need to get its details.
+// Action: kubectl describe pod <pod-name>
+// `
 
 // Modified GenerateCompletion function with refactored logic
 func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
