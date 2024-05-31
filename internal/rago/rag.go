@@ -92,25 +92,10 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 						pw.CloseWithError(err)
 						return
 					}
-					formattedResponse := openai.ChatCompletionStreamResponse{
-						ID:                resp.ID,
-						Object:            "chat.completion.chunk",
-						Created:           resp.Created,
-						Model:             req.Model,
-						Choices:           []openai.ChatCompletionStreamChoice{{Index: 0, Delta: openai.ChatCompletionStreamChoiceDelta{Content: result}}},
-						SystemFingerprint: resp.SystemFingerprint,
-					}
-					jsonResponse, err := json.Marshal(formattedResponse)
-					if err != nil {
-						pw.CloseWithError(err)
-						return
-					}
-					// Add the "data: " prefix
-					prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
-					if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
-						pw.CloseWithError(err)
-						return
-					}
+					writeResponse(result, pw, req, resp)
+				}
+				if choice.Delta.ToolCalls == nil {
+					writeResponse(choice.Delta.Content, pw, req, resp)
 				}
 			}
 		}
@@ -161,6 +146,29 @@ func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.
 	}
 
 	return resultsummary, nil
+}
+
+func writeResponse(content string, pw *io.PipeWriter, req openai.ChatCompletionRequest, resp openai.ChatCompletionStreamResponse) {
+
+	formattedResponse := openai.ChatCompletionStreamResponse{
+		ID:                resp.ID,
+		Object:            "chat.completion.chunk",
+		Created:           resp.Created,
+		Model:             req.Model,
+		Choices:           []openai.ChatCompletionStreamChoice{{Index: 0, Delta: openai.ChatCompletionStreamChoiceDelta{Content: content}}},
+		SystemFingerprint: resp.SystemFingerprint,
+	}
+	jsonResponse, err := json.Marshal(formattedResponse)
+	if err != nil {
+		pw.CloseWithError(err)
+		return
+	}
+	// Add the "data: " prefix
+	prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
+	if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
+		pw.CloseWithError(err)
+		return
+	}
 }
 
 // Extract the summary portion into a separate function
@@ -225,8 +233,7 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 				Description: "The ID or name of the light to control",
 			},
 			"state": {
-				Type: jsonschema.Boolean,
-				// Enum:        []bool{true, false},
+				Type:        jsonschema.Boolean,
 				Description: "The state to set the light to on (true) or off (false)",
 			},
 		},
