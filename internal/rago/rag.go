@@ -134,7 +134,7 @@ func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.
 	}
 
 	switch toolCall.Function.Name {
-	case "kube":
+	case "executeCommand":
 		// Execute the function call
 		command, ok := params["command"].(string)
 		if !ok {
@@ -229,29 +229,6 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 				// Enum:        []bool{true, false},
 				Description: "The state to set the light to on (true) or off (false)",
 			},
-			// "color": {
-			// 	Type: jsonschema.Object,
-			// 	Properties: map[string]jsonschema.Definition{
-			// 		"hue": {
-			// 			Type:        jsonschema.Integer,
-			// 			Description: "The hue of the light (0-65535)",
-			// 		},
-			// 		"saturation": {
-			// 			Type:        jsonschema.Integer,
-			// 			Description: "The saturation of the light (0-65535)",
-			// 		},
-			// 		"brightness": {
-			// 			Type:        jsonschema.Integer,
-			// 			Description: "The brightness of the light (0-65535)",
-			// 		},
-			// 		"kelvin": {
-			// 			Type:        jsonschema.Integer,
-			// 			Description: "The color temperature of the light (2500-9000)",
-			// 		},
-			// 	},
-			// 	Required:    []string{"hue", "saturation", "brightness", "kelvin"},
-			// 	Description: "The color settings of the light in HSBK format",
-			// },
 		},
 		Required: []string{"light_name", "state"},
 	}
