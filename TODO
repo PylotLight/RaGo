@@ -2,10 +2,11 @@
 - can you get all pods? = "get pods": prompt not generating full command? monitor after improved system prompt
 - allow more command option versitility: improved
 - I also need to fix response stability: improved specific system prompt / schema defintion updates / pattern matching?
+- access kubectl/sh/blubs from pod
+- use cloudflared/warp for local access?
 
 # Features
-- dockerise and host on cluster
-- add CICD pipe + skate for auth/secrets?
+- skate for auth/secrets?
 - add external accessiblity with auth support for external connection
 - I also want to look at multi step tools: borrowed from https://github.com/enricoros/big-AGI/blob/084e48ddc23fdf602fca961539e4f4e4a590cefe/src/modules/aifn/react/react.ts#L15
 - add sudo support for zpool/dmesg access
