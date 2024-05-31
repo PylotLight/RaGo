@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"strings"
+	"time"
 
 	rag "rago/internal/rago"
 
@@ -13,9 +14,10 @@ import (
 )
 
 func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("Got request for %s from %s\n", r.URL, r.RemoteAddr)
 	var req openai.ChatCompletionRequest
 	body, err := io.ReadAll(r.Body)
-	io.Copy(os.Stdout, r.Body)
+	apiKey := strings.Split(r.Header.Get("Authorization"), " ")[1]
 	if err != nil {
 		println(err.Error())
 	}
@@ -25,7 +27,7 @@ func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stream, err := rag.GenerateCompletion(req)
+	stream, err := rag.GenerateCompletion(req, apiKey)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error generating completion: %v", err), http.StatusInternalServerError)
 		return
@@ -39,4 +41,19 @@ func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+}
+func GetModelHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("Got request for %s from %s\n", r.URL, r.RemoteAddr)
+	apiKey := r.Header.Get("Authorization")
+	if apiKey == "" {
+		http.Error(w, "API key not set", http.StatusInternalServerError)
+		return
+	}
+
+	var model openai.ModelsList
+	model.Models = append(model.Models, openai.Model{ID: "llama3-70b-8192", Object: "llama3-70B", CreatedAt: time.Now().Unix(), OwnedBy: "Light"})
+	// Create a response object based on the API spec
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(model)
 }

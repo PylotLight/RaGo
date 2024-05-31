@@ -6,15 +6,16 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
+
+	"rago/internal/lifx"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
-const systemPrompt = `
+const cmdPrompt = `
 You are an assistant that helps execute various system and Kubernetes commands. Your primary goal is to ensure commands are correctly formatted and valid.
 Never repeat the question prompt.
 Basic Kubernetes Commands must start with 'kubectl' for Kubernetes to pull basic information or update deployment scaling. Examples:
@@ -37,77 +38,12 @@ When a specific pod name is needed, use multiple inline commands, ensure they ar
 - free -h | awk '{print $1, $2, $3}'
 `
 
-// const reActPrompt = `
-// You are a Question Answering AI with reasoning ability.
-// You will receive a Question from the User.
-// In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
-// If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
-// You will use "Thought: " to describe your thoughts about the question being asked.
-// You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
-// "Observation" will be presented to you as the result of previous "Action".
-// If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
-
-// Your available "Actions" are:
-// - Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods)
-// - System: Execute a system command (e.g., free -h)
-// - Network: Execute a network command (e.g., ping google.com)
-
-// Examples:
-// Question: Can you get the logs for the pod named "my-pod"?
-// Thought: I should get the logs for the specified pod.
-// Action: kubectl logs my-pod
-
-// Question: Can you get the details for the pod running the "nginx" container?
-// Thought: I need to find the pod running the "nginx" container first.
-// Action: kubectl get pods | grep 'app'
-
-// You will be called again with the following, along with all previous messages between the User and You:
-// Observation: nginx-app-tg89ftg8tdt
-
-// Thought: I found the pod running the "nginx" container. Now I need to get its details.
-// Action: kubectl describe pod <pod-name>
-// `
-
 // Modified GenerateCompletion function with refactored logic
-func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
-	config := openai.DefaultConfig(os.Getenv("GROQ_API_KEY"))
+func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Reader, error) {
+	config := openai.DefaultConfig(token)
 	config.BaseURL = "https://api.groq.com/openai/v1"
 	c := openai.NewClientWithConfig(config)
 	ctx := context.Background()
-
-	// Define the function schema for executing commands
-	params := jsonschema.Definition{
-		Type: jsonschema.Object,
-		Properties: map[string]jsonschema.Definition{
-			"command": {
-				Type:        jsonschema.String,
-				Description: "The kubectl command to execute",
-			},
-		},
-		Required: []string{"command"},
-	}
-
-	f := openai.FunctionDefinition{
-		Name:        "executeCommand",
-		Description: "Execute a command with given parameters",
-		Parameters:  params,
-	}
-
-	t := openai.Tool{
-		Type:     openai.ToolTypeFunction,
-		Function: &f,
-	}
-
-	// Add system prompt
-	req.Messages = append([]openai.ChatCompletionMessage{
-		{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: systemPrompt,
-		},
-	}, req.Messages...)
-
-	// Add the tool to the request
-	req.Tools = append(req.Tools, t)
 
 	// Create a pipe to stream the response
 	pr, pw := io.Pipe()
@@ -119,6 +55,8 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 				log.Printf("Error closing pipe writer: %v", err)
 			}
 		}()
+
+		addToolDefinitions(&req)
 
 		// Call the OpenAI API with streaming
 		stream, err := c.CreateChatCompletionStream(ctx, req)
@@ -149,6 +87,7 @@ func GenerateCompletion(req openai.ChatCompletionRequest) (io.Reader, error) {
 				if choice.Delta.ToolCalls != nil {
 					toolCall := choice.Delta.ToolCalls[0]
 					var result string
+					// Tool choice is made an executed returning the result
 					if result, err = handleToolCall(c, ctx, toolCall, req); err != nil {
 						pw.CloseWithError(err)
 						return
@@ -187,20 +126,35 @@ func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return fmt.Errorf("invalid function call arguments: %v", err).Error(), fmt.Errorf("invalid function call arguments: %v", err)
 	}
-
-	// Execute the function call
-	command, ok := params["command"].(string)
-	if !ok {
-		return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
-	}
-	result, err := executeCommand(command)
-	if err != nil {
-		result = err.Error()
+	var usersPrompt, commandSummary string
+	for _, message := range req.Messages {
+		if message.Role == "user" {
+			usersPrompt = message.Content
+		}
 	}
 
-	commandSummary := fmt.Sprintf("Prompt:%s\n\nCommand:%s\n\nResult:%s", req.Messages[1].Content, command, result)
-	println(commandSummary)
-	// Summarize the result
+	switch toolCall.Function.Name {
+	case "kube":
+		// Execute the function call
+		command, ok := params["command"].(string)
+		if !ok {
+			return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
+		}
+		result, err := executeCommand(command)
+		if err != nil {
+			result = err.Error()
+		}
+
+		commandSummary = fmt.Sprintf("Prompt: %s\n\nCommand: %s\n\nResult: %s", usersPrompt, command, result)
+
+	case "controlLights":
+		light_name := params["light_name"].(string)
+		state := params["state"].(bool)
+
+		commandSummary = lifx.UpdateLight(light_name, state)
+	}
+
+	// println(commandSummary)
 	resultsummary, err := summarizeResult(client, ctx, req.Model, commandSummary)
 	if err != nil {
 		return err.Error(), err
@@ -216,7 +170,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: "Concisely answer the question if required or summerise result in 1 sentence using past tense for the following command and execution result.",
+				Content: "Provide a concise and clear answer to the user's prompt by using the executed command and its result. Ensure the answer directly confirms the action taken and includes the outcome of the command without repeating the question.",
 			},
 			{
 				Role:    openai.ChatMessageRoleUser,
@@ -249,11 +203,8 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 	return summary, nil
 }
 
+// Execute server commands
 func executeCommand(command string) (string, error) {
-	// if !strings.HasPrefix(command, "kubectl") {
-	// 	return "", fmt.Errorf("unsupported command: %s", command)
-	// }
-
 	cmd := exec.Command("sh", "-c", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -261,4 +212,88 @@ func executeCommand(command string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(output)), nil
+}
+
+// Add tool schema defintions
+func addToolDefinitions(req *openai.ChatCompletionRequest) {
+	lifxParams := jsonschema.Definition{
+		Type: jsonschema.Object,
+		Properties: map[string]jsonschema.Definition{
+			"light_name": {
+				Type:        jsonschema.String,
+				Enum:        []string{"bedroom", "living room"},
+				Description: "The ID or name of the light to control",
+			},
+			"state": {
+				Type: jsonschema.Boolean,
+				// Enum:        []bool{true, false},
+				Description: "The state to set the light to on (true) or off (false)",
+			},
+			// "color": {
+			// 	Type: jsonschema.Object,
+			// 	Properties: map[string]jsonschema.Definition{
+			// 		"hue": {
+			// 			Type:        jsonschema.Integer,
+			// 			Description: "The hue of the light (0-65535)",
+			// 		},
+			// 		"saturation": {
+			// 			Type:        jsonschema.Integer,
+			// 			Description: "The saturation of the light (0-65535)",
+			// 		},
+			// 		"brightness": {
+			// 			Type:        jsonschema.Integer,
+			// 			Description: "The brightness of the light (0-65535)",
+			// 		},
+			// 		"kelvin": {
+			// 			Type:        jsonschema.Integer,
+			// 			Description: "The color temperature of the light (2500-9000)",
+			// 		},
+			// 	},
+			// 	Required:    []string{"hue", "saturation", "brightness", "kelvin"},
+			// 	Description: "The color settings of the light in HSBK format",
+			// },
+		},
+		Required: []string{"light_name", "state"},
+	}
+
+	// Define the function schema for executing commands
+	cmdParams := jsonschema.Definition{
+		Type: jsonschema.Object,
+		Properties: map[string]jsonschema.Definition{
+			"command": {
+				Type:        jsonschema.String,
+				Description: "The server command to execute",
+			},
+		},
+		Required: []string{"command"},
+	}
+
+	cmdFunc := openai.FunctionDefinition{
+		Name:        "executeCommand",
+		Description: "Execute a command with given parameters",
+		Parameters:  cmdParams,
+	}
+	lifxFunc := openai.FunctionDefinition{
+		Name:        "controlLights",
+		Description: "Control lifx lights with given parameters to turn them on or off",
+		Parameters:  lifxParams,
+	}
+	tools := []openai.Tool{{
+		Type:     openai.ToolTypeFunction,
+		Function: &cmdFunc,
+	}, {
+		Type:     openai.ToolTypeFunction,
+		Function: &lifxFunc,
+	}}
+
+	// Add system prompt
+	req.Messages = append([]openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: cmdPrompt,
+		},
+	}, req.Messages...)
+
+	// Add the tool to the request
+	req.Tools = tools
 }
