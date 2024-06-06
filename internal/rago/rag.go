@@ -163,7 +163,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 			},
 		},
 	}
-
+	print(result)
 	summaryStream, err := client.CreateChatCompletionStream(ctx, summaryReq)
 	if err != nil {
 		return "", err
