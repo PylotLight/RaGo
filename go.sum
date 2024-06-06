@@ -1,6 +1,4 @@
 github.com/2tvenom/golifx v0.0.0-20181128083437-451b36557cb4 h1:conniJSvY2J6Dkcc3Px0+Fw4BPrttYPhSFX/fcgdYkw=
 github.com/2tvenom/golifx v0.0.0-20181128083437-451b36557cb4/go.mod h1:FhwdY83iiQ6E725rmVyiCv0W2gCJD8ERsdvFwgZbWPo=
-github.com/sashabaranov/go-openai v1.24.0 h1:4H4Pg8Bl2RH/YSnU8DYumZbuHnnkfioor/dtNlB20D4=
-github.com/sashabaranov/go-openai v1.24.0/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
 github.com/sashabaranov/go-openai v1.24.1 h1:DWK95XViNb+agQtuzsn+FyHhn3HQJ7Va8z04DQDJ1MI=
 github.com/sashabaranov/go-openai v1.24.1/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
