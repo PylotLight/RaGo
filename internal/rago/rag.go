@@ -61,7 +61,6 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 			}
 
 			for _, choice := range resp.Choices {
-				println(choice.Delta.Content)
 				switch len(choice.Delta.ToolCalls) {
 				case 1:
 					var result string
@@ -278,9 +277,10 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 	You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
 	"Observation" will be presented to you as the result of previous "Action".
 	If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
-	If the intended action includes any delete commmands, generate a plan summary and await user confirmation in a follow up prompt.
+	If the Question or action ever requires a specific pod name, use the Pod search formula to pull and match the correct pod name.
 	Your available "Actions" are:
-	- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods, kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1))
+	- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods)
+	- Match: Pod search formula for matching user prompt for a pod to a specific kubernetes pod name (e.g, $(kubectl get pods --no-headers=true | grep "app" | awk '{print $1}' | head -1)) 
 	- System: Execute a linux system command (e.g., free -h, grep, awk '{print $1}')
 	- Network: Execute a network command (e.g., ping google.com)
 	- Lifx: Control a smart light (e.g., bedroom off)
@@ -288,13 +288,12 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 	Question: Can you get the logs for the pod named "my-pod"?
 	Thought: I should use a linux grep filter to match the pod name to get the logs.
 	Action: kubectl logs $(kubectl get pods | grep my-pod | awk '{print $1}' | head -1) | tail -50
-	Question: Can you get the details for the pod running the "nginx" container?
-	Thought: I need to find the pod running the "nginx" container first.
-	Action: kubectl get pods | grep 'app'
-	You will be called again with the following, along with all previous messages between the User and You:
-	Observation: nginx-app-tg89ftg8tdt
-	Thought: I found the pod running the "nginx" container. Now I need to get its details.
-	Action: kubectl describe pod nginx-app-tg89ftg8tdt
+	Question: Can you delete the jellyfin pod?
+	Thought: I need to find the exact name of the jellyfin pod first by using the "Pod search formula"
+	Action: echo $(kubectl get pods --no-headers=true | grep jellyfin | awk '{print $1}' | head -1)
+	Observation: jellyfin-xyz123
+	Thought: I found the pod named "jellyfin". Now I can delete it.
+	Action: kubectl delete pod jellyfin-xyz123
 	`
 	// Add system prompt
 	req.Messages = append([]openai.ChatCompletionMessage{
