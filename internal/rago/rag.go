@@ -101,6 +101,7 @@ func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai
 		if !ok {
 			return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
 		}
+		println("command:", command)
 		result, err := executeCommand(command)
 		if err != nil {
 			result = err.Error()
@@ -154,7 +155,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 			{
 				Role: openai.ChatMessageRoleSystem,
 				Content: `Provide a concise and clear answer to the user's prompt by using the executed command and its result. 
-				Ensure the answer directly confirms the action taken and includes the outcome of the command without repeating the question.
+				Ensure the answer directly confirms the action taken and includes the outcome of the command and NEVER repeat the question or summary prompt.
 				If there are any errors, make sure to include the full details including commands run`,
 			},
 			{
@@ -163,7 +164,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 			},
 		},
 	}
-	print(result)
+
 	summaryStream, err := client.CreateChatCompletionStream(ctx, summaryReq)
 	if err != nil {
 		return "", err
@@ -184,7 +185,6 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 			summary += summaryResp.Choices[0].Delta.Content
 		}
 	}
-	print(summary)
 	return summary, nil
 }
 
@@ -277,6 +277,7 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 	You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
 	"Observation" will be presented to you as the result of previous "Action".
 	If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
+	If the intended action includes any delete commmands, generate a plan summary and await user confirmation in a follow up prompt.
 	Your available "Actions" are:
 	- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods, kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1))
 	- System: Execute a linux system command (e.g., free -h, grep, awk '{print $1}')
