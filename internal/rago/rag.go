@@ -85,6 +85,7 @@ func chat_loop(c *openai.Client, ctx context.Context, pw *io.PipeWriter, resp *o
 		default:
 			result = choice.Delta.Content
 			if strings.Contains(result, "PAUSE") {
+				println("result:", result)
 				// Create another chat stream to evaluate the planned action before the PAUSE and execute if accurate.
 				// Call the OpenAI API with streaming
 				// req.Messages = append(req.Messages, )
