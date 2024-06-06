@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"strings"
 
-	"rago/internal/lifx"
+	"rago/internal/utils"
 
 	"github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
@@ -59,20 +58,9 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 				pw.CloseWithError(err)
 				return
 			}
-
-			for _, choice := range resp.Choices {
-				switch len(choice.Delta.ToolCalls) {
-				case 1:
-					var result string
-					// Tool choice is made an executed returning the result
-					if result, err = handle_ToolCall(c, ctx, choice.Delta.ToolCalls[0], req); err != nil {
-						pw.CloseWithError(err)
-						return
-					}
-					writeResponse(result, pw, req, resp)
-				default:
-					writeResponse(choice.Delta.Content, pw, req, resp)
-				}
+			if err := chat_loop(c, ctx, pw, &resp, &req); err != nil {
+				pw.CloseWithError(err)
+				return
 			}
 		}
 
@@ -81,8 +69,40 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 	return pr, nil
 }
 
+func chat_loop(c *openai.Client, ctx context.Context, pw *io.PipeWriter, resp *openai.ChatCompletionStreamResponse, req *openai.ChatCompletionRequest) error {
+	for _, choice := range resp.Choices {
+		var result string
+		fmt.Printf("%+v\n", resp.Choices)
+		switch len(choice.Delta.ToolCalls) {
+		case 1:
+			// Tool choice is made an executed returning the result
+			tool_result, err := handle_ToolCall(c, ctx, &choice.Delta.ToolCalls[0], req)
+			if err != nil {
+				// pw.CloseWithError(err)
+				return err
+			}
+			result = tool_result
+		default:
+			result = choice.Delta.Content
+			if strings.Contains(result, "PAUSE") {
+				// Create another chat stream to evaluate the planned action before the PAUSE and execute if accurate.
+				// Call the OpenAI API with streaming
+				// req.Messages = append(req.Messages, )
+				stream, err := c.CreateChatCompletionStream(ctx, *req)
+				if err != nil {
+					return err
+				}
+				defer stream.Close()
+				chat_loop(c, ctx, pw, resp, req)
+			}
+		}
+		utils.WriteResponse(result, pw, req, resp)
+	}
+	return nil
+}
+
 // Extract the tool handling logic into a separate function
-func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
+func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall *openai.ToolCall, req *openai.ChatCompletionRequest) (string, error) {
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return fmt.Errorf("invalid function call arguments: %v", err).Error(), fmt.Errorf("invalid function call arguments: %v", err)
@@ -102,7 +122,7 @@ func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai
 			return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
 		}
 		println("command:", command)
-		result, err := executeCommand(command)
+		result, err := utils.ExecuteCommand(command)
 		if err != nil {
 			result = err.Error()
 		}
@@ -113,7 +133,7 @@ func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai
 		light_name := params["light_name"].(string)
 		state := params["state"].(bool)
 
-		commandSummary = lifx.UpdateLight(light_name, state)
+		commandSummary = utils.UpdateLight(light_name, state)
 	}
 
 	// println(commandSummary)
@@ -123,80 +143,6 @@ func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai
 	}
 
 	return resultsummary, nil
-}
-
-func writeResponse(content string, pw *io.PipeWriter, req openai.ChatCompletionRequest, resp openai.ChatCompletionStreamResponse) {
-
-	formattedResponse := openai.ChatCompletionStreamResponse{
-		ID:                resp.ID,
-		Object:            "chat.completion.chunk",
-		Created:           resp.Created,
-		Model:             req.Model,
-		Choices:           []openai.ChatCompletionStreamChoice{{Index: 0, Delta: openai.ChatCompletionStreamChoiceDelta{Content: content}}},
-		SystemFingerprint: resp.SystemFingerprint,
-	}
-	jsonResponse, err := json.Marshal(formattedResponse)
-	if err != nil {
-		pw.CloseWithError(err)
-		return
-	}
-	prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
-	if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
-		pw.CloseWithError(err)
-		return
-	}
-}
-
-// Extract the summary portion into a separate function
-func summarizeResult(client *openai.Client, ctx context.Context, model string, result string) (string, error) {
-	summaryReq := openai.ChatCompletionRequest{
-		Model: model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role: openai.ChatMessageRoleSystem,
-				Content: `Provide a concise and clear answer to the user's prompt by using the executed command and its result. 
-				Ensure the answer directly confirms the action taken and includes the outcome of the command and NEVER repeat the question or summary prompt.
-				If there are any errors, make sure to include the full details including commands run`,
-			},
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: result,
-			},
-		},
-	}
-
-	summaryStream, err := client.CreateChatCompletionStream(ctx, summaryReq)
-	if err != nil {
-		return "", err
-	}
-	defer summaryStream.Close()
-
-	var summary string
-	for {
-		summaryResp, err := summaryStream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-
-		if len(summaryResp.Choices) > 0 {
-			summary += summaryResp.Choices[0].Delta.Content
-		}
-	}
-	return summary, nil
-}
-
-// Execute server commands
-func executeCommand(command string) (string, error) {
-	cmd := exec.Command("sh", "-c", command)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(output)), nil
 }
 
 // Add tool schema defintions
@@ -283,6 +229,7 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 	- Match: Pod search formula for matching user prompt for a pod to a specific kubernetes pod name (e.g, $(kubectl get pods --no-headers=true | grep "app" | awk '{print $1}' | head -1)) 
 	- System: Execute a linux system command (e.g., free -h, grep, awk '{print $1}')
 	- Network: Execute a network command (e.g., ping google.com)
+	- Search: Run a google search to pull relevant results from the internet
 	- Lifx: Control a smart light (e.g., bedroom off)
 	Examples:
 	Question: Can you get the logs for the pod named "my-pod"?
@@ -305,4 +252,45 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 
 	// Add the tool to the request
 	req.Tools = tools
+}
+
+// Extract the summary portion into a separate function
+func summarizeResult(client *openai.Client, ctx context.Context, model string, result string) (string, error) {
+	summaryReq := openai.ChatCompletionRequest{
+		Model: model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role: openai.ChatMessageRoleSystem,
+				Content: `Provide a concise and clear answer to the user's prompt by using the executed command and its result. 
+				Ensure the answer directly confirms the action taken and includes the outcome of the command and NEVER repeat the question or summary prompt.
+				If there are any errors, make sure to include the full details including commands run`,
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: result,
+			},
+		},
+	}
+
+	summaryStream, err := client.CreateChatCompletionStream(ctx, summaryReq)
+	if err != nil {
+		return "", err
+	}
+	defer summaryStream.Close()
+
+	var summary string
+	for {
+		summaryResp, err := summaryStream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+
+		if len(summaryResp.Choices) > 0 {
+			summary += summaryResp.Choices[0].Delta.Content
+		}
+	}
+	return summary, nil
 }
