@@ -184,7 +184,7 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 			summary += summaryResp.Choices[0].Delta.Content
 		}
 	}
-
+	print(summary)
 	return summary, nil
 }
 
@@ -269,7 +269,7 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 	- free -h | awk '{print $1, $2, $3}'
 	`
 	const reActPrompt = `
-	You are a Question Answering AI with reasoning ability.
+	You are a Question Answering AI with reasoning ability and ability to execute commands via tools.
 	You will receive a Question from the User.
 	In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
 	If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
