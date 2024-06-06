@@ -1,4 +1,4 @@
-# rago
+# RaGo
 Go built AI project which uses simple open-ai function calling to interact with k8s clusters and execute commands.
 ![image](https://github.com/PylotLight/rago/assets/7006124/684d3318-82bb-4deb-841f-51efd90696e2)
 
