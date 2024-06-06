@@ -15,29 +15,6 @@ import (
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
-const cmdPrompt = `
-You are an assistant that helps execute various system and Kubernetes commands. Your primary goal is to ensure commands are correctly formatted and valid.
-Never repeat the question prompt.
-Basic Kubernetes Commands must start with 'kubectl' for Kubernetes to pull basic information or update deployment scaling. Examples:
-- kubectl get pods
-- kubectl describe node
-- kubectl scale deployment app --replicas==1
-- kubectl logs app
-
-You can also run general system commands. Examples:
-- free -h
-- df -h
-
-Ensure the output is correct and complete. If additional information is needed, perform the necessary intermediary steps to gather required details.
-
-For multi-step processes, think through the sequence of commands needed to achieve the final goal and execute them accordingly. For example, if a specific pod's logs are requested but not provided, first list the pods using '$(kubectl get pods | grep app | awk '{print $1}' | head -1)' to find the relevant name, then retrieve the logs for that pod.
-
-When a specific pod name is needed, use multiple inline commands, ensure they are correctly formatted. Examples:
-- kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1)
-- kubectl logs $(kubectl get pods | grep app | awk '{print $1}' | head -1) | tail -50
-- free -h | awk '{print $1, $2, $3}'
-`
-
 // Modified GenerateCompletion function with refactored logic
 func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Reader, error) {
 	config := openai.DefaultConfig(token)
@@ -84,17 +61,16 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 			}
 
 			for _, choice := range resp.Choices {
-				if choice.Delta.ToolCalls != nil {
-					toolCall := choice.Delta.ToolCalls[0]
+				switch len(choice.Delta.ToolCalls) {
+				case 1:
 					var result string
 					// Tool choice is made an executed returning the result
-					if result, err = handleToolCall(c, ctx, toolCall, req); err != nil {
+					if result, err = handle_ToolCall(c, ctx, choice.Delta.ToolCalls[0], req); err != nil {
 						pw.CloseWithError(err)
 						return
 					}
 					writeResponse(result, pw, req, resp)
-				}
-				if choice.Delta.ToolCalls == nil {
+				default:
 					writeResponse(choice.Delta.Content, pw, req, resp)
 				}
 			}
@@ -106,7 +82,7 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 }
 
 // Extract the tool handling logic into a separate function
-func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
+func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai.ToolCall, req openai.ChatCompletionRequest) (string, error) {
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
 		return fmt.Errorf("invalid function call arguments: %v", err).Error(), fmt.Errorf("invalid function call arguments: %v", err)
@@ -146,6 +122,14 @@ func handleToolCall(client *openai.Client, ctx context.Context, toolCall openai.
 	}
 
 	return resultsummary, nil
+}
+
+func handle_RagCall() {
+
+}
+
+func handle_LangChainCall() {
+
 }
 
 func writeResponse(content string, pw *io.PipeWriter, req openai.ChatCompletionRequest, resp openai.ChatCompletionStreamResponse) {
@@ -269,12 +253,59 @@ func addToolDefinitions(req *openai.ChatCompletionRequest) {
 		Type:     openai.ToolTypeFunction,
 		Function: &lifxFunc,
 	}}
+	const defaultPrompt = `
+	You are an assistant that helps execute various system and Kubernetes commands. Your primary goal is to ensure commands are correctly formatted and valid.
+	Never repeat the question prompt.
+	Basic Kubernetes Commands must start with 'kubectl' for Kubernetes to pull basic information or update deployment scaling. Examples:
+	- kubectl get pods
+	- kubectl describe node
+	- kubectl scale deployment app --replicas==1
+	- kubectl logs app
 
+	You can also run general system commands. Examples:
+	- free -h
+	- df -h
+
+	Ensure the output is correct and complete. If additional information is needed, perform the necessary intermediary steps to gather required details.
+
+	For multi-step processes, think through the sequence of commands needed to achieve the final goal and execute them accordingly. For example, if a specific pod's logs are requested but not provided, first list the pods using '$(kubectl get pods | grep app | awk '{print $1}' | head -1)' to find the relevant name, then retrieve the logs for that pod.
+
+	When a specific pod name is needed, use multiple inline commands, ensure they are correctly formatted. Examples:
+	- kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1)
+	- kubectl logs $(kubectl get pods | grep app | awk '{print $1}' | head -1) | tail -50
+	- free -h | awk '{print $1, $2, $3}'
+	`
+	const reActPrompt = `
+	You are a Question Answering AI with reasoning ability.
+	You will receive a Question from the User.
+	In order to answer any Question, you run in a loop of Thought, Action, PAUSE, Observation.
+	If from the Thought or Observation you can derive the answer to the Question, you MUST also output an "Answer: ", followed by the answer and the answer ONLY, without explanation of the steps used to arrive at the answer.
+	You will use "Thought: " to describe your thoughts about the question being asked.
+	You will use "Action: " to run one of the actions available to you - then return PAUSE. NEVER continue generating "Observation: " or "Answer: " in the same response that contains PAUSE.
+	"Observation" will be presented to you as the result of previous "Action".
+	If the "Observation" you received is not related to the question asked, or you cannot derive the answer from the observation, change the Action to be performed and try again.
+	Your available "Actions" are:
+	- Kubernetes: Execute a Kubernetes command (e.g., kubectl get pods, kubectl describe pod $(kubectl get pods --no-headers=true | grep app | awk '{print $1}' | head -1))
+	- System: Execute a linux system command (e.g., free -h, grep, awk '{print $1}')
+	- Network: Execute a network command (e.g., ping google.com)
+	- Lifx: Control a smart light (e.g., bedroom off)
+	Examples:
+	Question: Can you get the logs for the pod named "my-pod"?
+	Thought: I should use a linux grep filter to match the pod name to get the logs.
+	Action: kubectl logs $(kubectl get pods | grep my-pod | awk '{print $1}' | head -1) | tail -50
+	Question: Can you get the details for the pod running the "nginx" container?
+	Thought: I need to find the pod running the "nginx" container first.
+	Action: kubectl get pods | grep 'app'
+	You will be called again with the following, along with all previous messages between the User and You:
+	Observation: nginx-app-tg89ftg8tdt
+	Thought: I found the pod running the "nginx" container. Now I need to get its details.
+	Action: kubectl describe pod nginx-app-tg89ftg8tdt
+	`
 	// Add system prompt
 	req.Messages = append([]openai.ChatCompletionMessage{
 		{
 			Role:    openai.ChatMessageRoleSystem,
-			Content: cmdPrompt,
+			Content: reActPrompt,
 		},
 	}, req.Messages...)
 
