@@ -94,7 +94,9 @@ func chat_loop(c *openai.Client, ctx context.Context, pw *io.PipeWriter, resp *o
 					return err
 				}
 				defer stream.Close()
-				chat_loop(c, ctx, pw, resp, req)
+				if err := chat_loop(c, ctx, pw, resp, req); err != nil {
+					return err
+				}
 			}
 		}
 		utils.WriteResponse(result, pw, req, resp)
