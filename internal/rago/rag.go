@@ -61,6 +61,7 @@ func GenerateCompletion(req openai.ChatCompletionRequest, token string) (io.Read
 			}
 
 			for _, choice := range resp.Choices {
+				println(choice.Delta.Content)
 				switch len(choice.Delta.ToolCalls) {
 				case 1:
 					var result string
