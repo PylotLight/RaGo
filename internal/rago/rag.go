@@ -124,14 +124,6 @@ func handle_ToolCall(client *openai.Client, ctx context.Context, toolCall openai
 	return resultsummary, nil
 }
 
-func handle_RagCall() {
-
-}
-
-func handle_LangChainCall() {
-
-}
-
 func writeResponse(content string, pw *io.PipeWriter, req openai.ChatCompletionRequest, resp openai.ChatCompletionStreamResponse) {
 
 	formattedResponse := openai.ChatCompletionStreamResponse{
@@ -147,7 +139,6 @@ func writeResponse(content string, pw *io.PipeWriter, req openai.ChatCompletionR
 		pw.CloseWithError(err)
 		return
 	}
-	// Add the "data: " prefix
 	prefixedResponse := fmt.Sprintf("data: %s\n", jsonResponse)
 	if _, err := pw.Write([]byte(prefixedResponse)); err != nil {
 		pw.CloseWithError(err)
@@ -161,8 +152,10 @@ func summarizeResult(client *openai.Client, ctx context.Context, model string, r
 		Model: model,
 		Messages: []openai.ChatCompletionMessage{
 			{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: "Provide a concise and clear answer to the user's prompt by using the executed command and its result. Ensure the answer directly confirms the action taken and includes the outcome of the command without repeating the question.",
+				Role: openai.ChatMessageRoleSystem,
+				Content: `Provide a concise and clear answer to the user's prompt by using the executed command and its result. 
+				Ensure the answer directly confirms the action taken and includes the outcome of the command without repeating the question.
+				If there are any errors, make sure to include the full details including commands run`,
 			},
 			{
 				Role:    openai.ChatMessageRoleUser,
