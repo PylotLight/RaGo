@@ -27,7 +27,7 @@ func HandleCompletionRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stream, err := rag.GenerateCompletion(req, apiKey)
+	stream, err := rag.GenerateCompletion(&req, apiKey)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error generating completion: %v", err), http.StatusInternalServerError)
 		return
