@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/2tvenom/golifx"
@@ -15,18 +16,20 @@ import (
 )
 
 type ChatContext struct {
-	Client  *openai.Client
-	Ctx     context.Context
-	PWriter *io.PipeWriter
-	PReader *io.PipeReader
-	Req     *openai.ChatCompletionRequest
-	Resp    *openai.ChatCompletionStreamResponse
+	Client       *openai.Client
+	Ctx          context.Context
+	PWriter      *io.PipeWriter
+	PReader      *io.PipeReader
+	Req          *openai.ChatCompletionRequest
+	Resp         *openai.ChatCompletionStreamResponse
+	PromptResult string
+	UserPrompt   string
 }
 
-func (cc *ChatContext) Process_ChatStream() {
+func (cc *ChatContext) Process_ChatStream() error {
 	stream, err := cc.Client.CreateChatCompletionStream(cc.Ctx, *cc.Req)
 	if err != nil {
-		return
+		return err
 	}
 	defer stream.Close()
 	for {
@@ -35,58 +38,81 @@ func (cc *ChatContext) Process_ChatStream() {
 		if err == io.EOF {
 			// Write the [DONE] message to indicate end of stream
 			if _, err := cc.PWriter.Write([]byte("data: [DONE]\n")); err != nil {
-				cc.PWriter.CloseWithError(err)
-				return
+				return cc.PWriter.CloseWithError(err)
 			}
 			break
 		}
 		if err != nil {
-			cc.PWriter.CloseWithError(err)
-			return
+			return cc.PWriter.CloseWithError(err)
 		}
 		if err := cc.chat_loop(); err != nil {
-			cc.PWriter.CloseWithError(err)
-			return
+			return cc.PWriter.CloseWithError(err)
 		}
 	}
+	return nil
 }
 
 func (cc *ChatContext) chat_loop() error {
-	var result string
+	// Action handlers
+	actionHandlers := map[string]func(){
+		"Command": func() {
+			cc.addToolDefinitions("command")
+			cc.Process_ChatStream()
+		},
+		"Lifx": func() {
+			cc.addToolDefinitions("lifx")
+			cc.Process_ChatStream()
+		},
+		"Search": func() {
+			println("Search internet and run chat loop again")
+			// cc.addToolDefinitions("search")
+			// cc.Process_ChatStream()
+		},
+	}
+
+	// Helper function to check and handle actions
+	checkAndHandleActions := func(result string) (handled bool, err error) {
+		for action, handler := range actionHandlers {
+			// Search[Latest Go version including minor versions] run with action here or something?
+			if strings.EqualFold(result, action) {
+				handler()
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 
 	for _, choice := range cc.Resp.Choices {
-		switch len(choice.Delta.ToolCalls) {
-		case 1:
-			fmt.Printf("%+v\n", cc.Resp.Choices)
-			// Tool choice is made and executed returning the result
-			tool_result, err := cc.handle_ToolCall(&choice.Delta.ToolCalls[0])
+		cc.PromptResult = cc.PromptResult + choice.Delta.Content
+		if strings.Contains(cc.PromptResult, "PAUSE") {
+			cc.UserPrompt = cc.PromptResult
+			matches := regexp.MustCompile(`Action: (?P<action>\w+)\[.*?\]`).FindStringSubmatch(cc.PromptResult)
+			if len(matches) > 0 {
+				cc.PromptResult = ""
+				handled, err := checkAndHandleActions(matches[1])
+				if err != nil {
+					cc.PWriter.CloseWithError(err)
+					return err
+				}
+				if handled {
+					return nil
+				}
+			}
+
+		}
+
+		// Process tool calls if present
+		if len(choice.Delta.ToolCalls) > 0 {
+			toolResult, err := cc.handle_ToolCall(&choice.Delta.ToolCalls[0])
 			if err != nil {
 				cc.PWriter.CloseWithError(err)
 				return err
 			}
-			result = tool_result
-		default:
-			// fmt.Printf("%+v\n", resp.Choices)
-			result = choice.Delta.Content
-			println(result)
-			if strings.Contains(result, "PAUSE") {
-				switch result {
-				case "command":
-					cc.addToolDefinitions("command")
-				case "lifx":
-					cc.addToolDefinitions("lifx")
-				}
-				// Create another chat stream to evaluate the planned action before the PAUSE and execute if accurate.
-				// Call the OpenAI API with streaming
-				cc.Process_ChatStream()
-				writeResponse(cc.Resp.Choices[0].Delta.Content, cc.PWriter, cc.Req, cc.Resp)
-			}
-			if strings.EqualFold(result, "action:") {
-				println("action!!", result)
-			}
+			writeResponse(toolResult, cc.PWriter, cc.Req, cc.Resp)
 		}
-		writeResponse(result, cc.PWriter, cc.Req, cc.Resp)
+
 	}
+	// writeResponse(cc.PromptResult, cc.PWriter, cc.Req, cc.Resp)
 	return nil
 }
 
@@ -110,7 +136,6 @@ func (cc *ChatContext) handle_ToolCall(toolCall *openai.ToolCall) (string, error
 		if !ok {
 			return "command not found in function call arguments", fmt.Errorf("command not found in function call arguments")
 		}
-		println("command:", command)
 		result, err := executeCommand(command)
 		if err != nil {
 			result = err.Error()
@@ -125,7 +150,6 @@ func (cc *ChatContext) handle_ToolCall(toolCall *openai.ToolCall) (string, error
 		commandSummary = updateLight(light_name, state)
 	}
 
-	// println(commandSummary)
 	resultsummary, err := cc.summarizeResult(commandSummary)
 	if err != nil {
 		return err.Error(), err
@@ -136,51 +160,72 @@ func (cc *ChatContext) handle_ToolCall(toolCall *openai.ToolCall) (string, error
 
 // Add tool schema defintions
 func (cc *ChatContext) addToolDefinitions(tool string) {
-	lifxParams := jsonschema.Definition{
-		Type: jsonschema.Object,
-		Properties: map[string]jsonschema.Definition{
-			"light_name": {
-				Type:        jsonschema.String,
-				Enum:        []string{"bedroom", "living room"},
-				Description: "The ID or name of the light to control",
-			},
-			"state": {
-				Type:        jsonschema.Boolean,
-				Description: "The state to set the light to on (true) or off (false)",
-			},
-		},
-		Required: []string{"light_name", "state"},
-	}
 
 	// Define the function schema for executing commands
-	cmdParams := jsonschema.Definition{
-		Type: jsonschema.Object,
-		Properties: map[string]jsonschema.Definition{
-			"command": {
-				Type:        jsonschema.String,
-				Description: "The server command to execute",
+	toolReq := openai.ChatCompletionRequest{
+		Model: cc.Req.Model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: `Use the provided tool defintion to answer the users prompt using the provided thought, and action context information.`,
+			},
+			{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: cc.Req.Messages[1].Content,
+			},
+			{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: cc.UserPrompt,
 			},
 		},
-		Required: []string{"command"},
 	}
+	cc.Req = &toolReq
 
-	cmdFunc := openai.FunctionDefinition{
-		Name:        "executeCommand",
-		Description: "Execute a command with given parameters",
-		Parameters:  cmdParams,
-	}
-	lifxFunc := openai.FunctionDefinition{
-		Name:        "controlLights",
-		Description: "Control lifx lights with given parameters to turn them on or off",
-		Parameters:  lifxParams,
-	}
 	switch tool {
 	case "command":
+
+		cmdParams := jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"command": {
+					Type:        jsonschema.String,
+					Description: "The server command to execute",
+				},
+			},
+			Required: []string{"command"},
+		}
+
+		cmdFunc := openai.FunctionDefinition{
+			Name:        "executeCommand",
+			Description: "Execute a command with given parameters",
+			Parameters:  cmdParams,
+		}
 		cc.Req.Tools = []openai.Tool{{
 			Type:     openai.ToolTypeFunction,
 			Function: &cmdFunc,
 		}}
+
 	case "lifx":
+		lifxParams := jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"light_name": {
+					Type:        jsonschema.String,
+					Enum:        []string{"bedroom", "living room"},
+					Description: "The ID or name of the light to control",
+				},
+				"state": {
+					Type:        jsonschema.Boolean,
+					Description: "The state to set the light to on (true) or off (false)",
+				},
+			},
+			Required: []string{"light_name", "state"},
+		}
+		lifxFunc := openai.FunctionDefinition{
+			Name:        "controlLights",
+			Description: "Control lifx lights with given parameters to turn them on or off",
+			Parameters:  lifxParams,
+		}
 		cc.Req.Tools = []openai.Tool{{
 			Type:     openai.ToolTypeFunction,
 			Function: &lifxFunc,
